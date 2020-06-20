@@ -1,0 +1,421 @@
+---
+title: "Analiza systemu wypożyczalni rowerów publicznych w Waszyngtonie"
+author: "Radosław Pałkowski"
+date: "9 czerwca 2018"
+output:
+  html_document: default
+  md_document:
+    variant: markdown_github
+  
+  
+---
+
+```{r setup, echo=FALSE,warning=FALSE,message=FALSE}
+knitr::opts_chunk$set(fig.width=9,fig.height=5,fig.path='wykresy/',
+                      fig.align='center',tidy=TRUE,
+                      echo=FALSE,warning=FALSE,message=FALSE)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#Wykorzystywane pakiety:
+library(lattice)
+library(pROC)
+library(ggplot2)
+library(e1071)
+library(caret)
+library(ipred)
+
+```
+
+
+### <span style="color:#0066ff">**1. Źródło danych**</span>
+
+#### <span style="color:#0066ff">**1.1. Informacje o źródle** </span>
+
+Dane do analizy zostały pobrane z ogólnodostępnego repozytorium zbiorów danych UC Irvine Machine Learning Repository (UCI). 
+Bezpośredni [link](http://archive.ics.uci.edu/ml/datasets/Bike+Sharing+Dataset) do zbioru danych. 
+
+#### <span style="color:#0066ff">**1.2. Pliki ze zbiorami danych**</span> 
+
+W powyższym linku do repozytorium UCI znajdują się dwa pliki o rozszerzeniu _.csv_ ze zbiorami danych. Przperowadzono analizę z wykorzystaniem obydwu zbiorów danych:
+
+1. plik __day.csv__ zawierający dane dotyczące wypożyczeń rowerów zagregowane według dni. Liczba obserwacji obejmuje 731 dni. 
+2. plik __hour.csv__ zawierający dane dotyczące wypożyczeń rowerów w poszczególnych dniach zagregowane według godzin. Liczba obserwacji obejmuje 17 379 godzin. 
+
+
+#### <span style="color:#0066ff">**1.3. Zawartość zbiorów danych**</span>
+
+Zarówno zbiór __hour.csv__, jak i __day.csv__ zawierają taki sam zestaw zmiennych. Jednyną różnicą jest dodatkowa zmienna _hr_, która określa godzinę wypożyczenia roweru w zbiorze _hour_.
+
+Zakres danych obejmuje dzienne obserwacje począwszy od 1 stycznia 2011 roku do 31 grudnia 2012 roku. Dane pochodzą z systemu wypożyczalni _Capital Bikeshare_ w Waszyngtonie w USA. 
+
+Charakterystyka zbiorów danych: 
+
+- ***instant*** - numer obserwacji 
+- ***dteday*** - data wypożyczenia roweru
+- ***season*** - pora roku, gdzie:
+    - 1 - wiosna
+    - 2 - lato
+    - 3 - jesień
+    - 4 - zima
+- ***yr*** - rok, zmienna dychotomiczna:
+    - 0 - rok 2011
+    - 1 - rok 2012
+- ***mnth*** - miesiąc od 1 do 12, gdzie:
+    - 1 - styczeń
+    - 2 - luty
+    - ...
+    - 11 - listopad
+    - 12 - grudzień
+- ***hr*** - godzina od godziny 0 do godziny 23
+- ***holiday*** - święto, zmienna dychotomiczna:
+    - 1 - dany dzień jest dniem świątecznym
+    - 0 - dany dzień nie jest dniem świątecznym
+    _Kalendarz dni świątecznych dotyczy USA. Dane według [strony internetowej](http://dchr.dc.gov/page/holiday-schedule)_
+- ***weekday*** - dzień tygodnia, gdzie:
+    - 0 - niedziela
+    - 1 - poniedziałek
+    - ...
+    - 5 - piątek
+    - 6 - sobota 
+- ***workingday*** - dzień pracujący, zmienna dychotomiczna: 
+    - 1 - dany dzień jest dniem pracującym 
+    - 0 - dany dzień wypada w weekend lub jest to dzień świąteczny 
+- ***weathersit*** - warunki atmosferyczne: 
+     - 1 - czyste niebo lub częściowe zachmurzenie
+     - 2 - mgła
+     - 3 - lekki śnieg lub deszcz
+     - 4 - ciężki śnieg lub deszcz, grad, burza 
+- ***temp*** - Temperatura w stopniach Celsjusza poddana standaryzacji. Wartość min -8, max +39  
+- ***atemp*** - Odczuwana temperatura w stopniach Celsjusza poddana standaryzacji. Wartość min -16, max +50  
+- ***hum*** - Standaryzowana wilgotność powietrza. Wartość max 100
+- ***windspeed*** - Standaryzowana prędkość wiatru. Wartość max 67
+- ***casual*** - liczba wypożyczeń przez przypadkowych/niezarejestrowanych użytkowników
+- ***registered*** - liczba wypożyczeń przez zarejestrowanych użytkowników
+- ***cnt*** - liczba wypożyczeń przez użytkowników niezarejestrowanych oraz zarejestrowanych
+
+
+### <span style="color:#0066ff">**2. Opis analizowanego zagadnienia**</span>
+
+Liczba wypożyczeń rowerów publicznych jest ściśle skorelowana z warunkami środowiskowymi i sezonowymi. Czynnikami wpływającymi na liczbę wypożyczeń mogą być m.in.: opady atmosferyczne, temperatura powietrza, pora roku, pora dnia, czy dzień tygodnia. 
+
+System rowerów publicznych to nowa generacja tradycyjnych wypożyczalni rowerów. Przewagą nad tradycyjnymi wypożyczalniami rowerów jest proces rejestracji nowego użytkownika, wypożyczenie oraz zwrot roweru, bowiem wszystko to zostało w pełni zautomatyzowane. Dzięki temu, użytkownik może w bardzo prosty sposób wypożyczyć rower z określonej lokalizacji i oddać go z powrotem w innej.
+
+Obecnie można zaobserwować wzrost zainteresowania rowerami publicznymi, których proces wypożyczania staje się coraz prostszy i wygodniejszy. Co więcej, opłaty za wypożyczenie nie są zbyt wysokie. Dodatkowym atutem jest aktywność fizyczna i kwestie zdrowotne oraz troska o jakość powietrza w wielkich miastach, ponieważ rower nie emituje jakichkolwiek spalin, które zanieczyszczają środowisko.
+
+Oprócz aspektów zdrowotnych oraz środowiskowych, z rowerami publiczymi związany jest również aspekt ekonomiczny. Analiza liczby wypożyczeń może dać odpowiedź na pytania dotyczące strategii obranych przez firmy zarządzające danymi wypożyczalniami. Czy warto stworzyć nowy punkt w okolicy najczęściej używanej lokalizacji? Czy liczba rowerów jest wystarczająca? Jaka pora roku lub dnia jest najlepsza na wypożyczenie roweru? Czy rośnie liczba zarejestrowanych użytkowników lub tych okazjonalnych? To tylko przykładowe pytania, na które odpowiedzi mogą wskazać kierunek rozwoju systemów wypożyczalni rowerów publicznych w miastach. Dodatkowo, charakterystyka danych generowanych przez te systemy, czyni je atrakcyjnymi do analiz. W przeciwieństwie do innych usług transportowych, takich jak autobus lub metro, czas trwania i miejsce podróży są rejestrowane w tych systemach. Ta funkcja zamienia system wypożyczania rowerów w wirtualną sieć czujników, która może służyć np. do wykrywania mobilności w mieście.
+
+### <span style="color:#0066ff">**3. Cel analizy oraz pytania badawcze**</span> 
+
+Celem analizy jest scharakteryzowanie systemu wypożyczalni rowerów publicznych w Waszyngtonie w latach 2011-2012. 
+
+Postawiono następujące pytania badawcze: 
+
++ Jaka jest tendencja w liczbie wypożyczeń rowerów publicznych?
++ Jak kształtuje się struktura liczby użytkowników systemu?
++ Jak rozkłada się liczba wypożyczeń względem pory dnia, dni tygodnia, miesięcy i pór roku?
++ Czy w dni wolne od pracy ludzie chętnie wypożyczają rowery?
++ Czy warunki pogodowe mają wpływ na liczbę wypożyczeń?
++ Jakie czynniki mają największy wpływ na fakt wypożyczenia roweru lub nie?
+
+### <span style="color:#0066ff">**4. Wstępna analiza danych**</span> 
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+d = read.csv("./day.csv", header=TRUE, sep=",")
+h = read.csv("./hour.csv", header=TRUE, sep=",")
+```
+
+##### **Rysunek 1.** Tendencja w liczbie wypożyczeń rowerów publicznych wśród użytkowników ogółem  
+```{r bike-sharing-1, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+data=as.Date(d$dteday)
+plot(x=data, y=d$cnt, xlim=c(as.Date(d[1,2]),as.Date(d[731,2])), main="Liczba wypożyczeń rowerów ogółem", pch=20, col="skyblue1", xlab="Czas", ylab="Liczba wypożyczeń", ylim=c(0,10000), axes=FALSE)
+axis(side=2, at=seq(0,10000,1000),cex.axis=0.75)
+axis.Date(1, at=seq(min(data), max(data), by=30), format="%m-%Y", cex.axis=0.75, las=2)
+```
+
+Liczba wypożyczeń rowerów publicznych ogółem w latach 2011-2012 charakteryzowała się trendem rosnącym. Widoczny jest on względem mięsięcy maj-wrzesień rok do roku. Również widoczny wzrost w liczbie wypożyczeń w pierwszych miesiącach roku tj. styczeń-marzec, gdzie zjawisko to wzrosło średnio o około 1500. Średnio najwięcej wypożyczeń rowerów ogółem zarejstrowano w miesiącach letnich, gdy temperatura sprzyja przemieszczaniu się środkiem transportu jakim jest rower. W roku 2011 średnio najwięcej wypożyczano rowery 5000 razy. Natomiast w roku 2012 najwięcej wypożyczano około 7000 razy. 
+
+##### **Rysunek 2.** Tendencja w liczbie wypożyczeń rowerów publicznych wśród użytkowników okazjonalnych
+
+```{r bike-sharing-2, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+plot(x=data, y=d$casual, xlim=c(as.Date(d[1,2]),as.Date(d[731,2])), main="Liczba wypożyczeń wśród użytkowników okazjonalnych", pch=20, col="skyblue1", xlab="Czas", ylab="Liczba wypożyczeń", ylim=c(0,10000), axes=FALSE)
+axis(side=2, at=seq(0,5000, 1000),cex.axis=0.75)
+axis.Date(1, at=seq(min(data), max(data), by=30), format="%m-%Y", cex.axis=0.75, las=2)
+
+```
+
+Liczba wypożyczeń przez użytkowników, którzy wypożyczają rowery okazyjnie średnio oscylowała na poziomie około 1000 w roku 2011, a w 2012 około 1500 razy. Wzrost liczby wypożyczeń w tej kategorii użykowników nie jest wyraźny. Wyraźny jest wzrost wartości obserwacji odstających, które wzrosły z poziomu około 2000 w miesiącach maj-wrzesień roku 2011 do poziomu około 2000 wypożyczeń w okresie maj-wrzesień 2012 roku. Co więcej, wysokie wartości odstające zostały zaobserwowane w 2012 roku trochę wcześniej, bowiem już w marcu.    
+
+##### **Rysunek 3.** Tendencja w liczbie wypożyczeń rowerów publicznych wśród użytkowników zarejstrowanych
+
+```{r bike-sharing-3, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+plot(x=data, y=d$registered, xlim=c(as.Date(d[1,2]),as.Date(d[731,2])), main="Liczba wypożyczeń wsród użytkowników zarejestrowanych", pch=20, col="skyblue1", xlab="Czas", ylab="Liczba wypożyczeń", ylim=c(0,10000), axes=FALSE)
+axis(side=2, at=seq(0,9000,1000),cex.axis=0.75)
+axis.Date(1, at=seq(min(data), max(data), by=30), format="%m-%Y", cex.axis=0.75, las=2)
+
+```
+
+Powyższy wykres wskazuje, że grupa użytkowników, którzy są zarejstrowani w systemie rowerów publicznych chętniej wypożycza rowery, niż grupa użytkowników okazjonalnych, nieposiadających konta. Użytkownicy zarejstrowani wykazują zainteresowanie dalszym wypożyczaniem rowerów, ponieważ zauważalna jest wyraźna tendencja rosnąca. Średnio najwięcej razy użytkownicy zarejestrowani wypożyczali rowery w 2011 roku w miesiącach maj-wrzesień. W roku 2012 okres ten został wydłużony od marca do października. Dodatkowo w październiku zarejstrowano największą liczbę wypożyczeń. Podsumowując, nastapił wzrost średniego poziomu wypożyczeń rowerów oraz użytkownicy zarejestrowani zaczęli częściej wypożyczać rowery i wydłużyli ten okres w 2012 roku, niż w roku poprzednim.  
+
+##### **Rysunek 4.** Struktura użytkowników systemu wypożyczeń rowerów publicznych
+
+```{r bike-sharing-4, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+etykiety=c("Zarejestrowani", "Okazjonalni")
+proc=c(round(sum(d$registered)/sum(d$cnt)*100), round(sum(d$casual)/sum(d$cnt)*100))
+etykiety=paste(etykiety, proc)
+etykiety=paste(etykiety, "%", sep="")
+pie(c(sum(d$registered), sum(d$casual, na.rm = T)),col = c("skyblue1","skyblue2"), labels =etykiety, main="Wypożyczenia według użytkowników")
+
+```
+
+Powyższy wykres wskazuje wyraźną przewagę użytkowników korzystajacych z systemu wypożyczalni rowerów publicznych, którzy są w nim zarejsertowani od tych, którzy nie posiadają konta i wypozyczają rowery okazjonalnie. Użytkownicy zarejstrowani w latach 2011-2012 stanowili łącznie 81%  wszystkich wypożyczeń, natomiast użytkownicy okazjonalni tylko 19%.
+Łącznie w latach 2011-2012 wypożyczano rowery `r sum(d$cnt)` razy, w tym użytkownicy zarejestrowani `r sum(d$registered)`, a okazjonalni `r sum(d$casual)` razy. 
+
+##### **Rysunek 5.** Rozkład wypożyczeń ogółem względem pory dnia
+
+```{r bike-sharing-5, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+options(scipen = 10)
+godz=aggregate(h$cnt, by=list(h$hr), FUN = sum)
+
+barplot(height=godz$x, names.arg=godz$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.75, las=2, main="Wypożyczenia względem pory dnia")
+```
+
+Wykres pokazuje w jakich porach dnia w latach 2011-2012 nastąpiła największa liczba wypożyczeń rowerów wśród użytkowników ogółem. Można zaobserwować dwie pory dnia, które wyróżniają się w ciągu całej doby. Są to "szczyty komunikacyjne" - poranny w godzinach 7-9 oraz popołudniowy w godzinach 16-19. Przy czym najczęściej w tych porach dnia rowery były wypożyczane o godzinie 8 oraz 17 i 18. Można przypuszczać, że rowery oprócz aspektów rekreacyjnych stanowią dogodny środek komunikacji do pracy, szkoły lub do domu. Warto również zaznaczyć, że w szczycie popołudniowym średnio częściej wypożyczane były rowery niż w szczycie porannym. Najrzadziej wypożycza się rowery w nocy/nad ranem w godzinach 3-4, bowiem wtedy ruch w systemie wypożyczalni jest najmniejszy. W ciągu dnia pomiędzy szczytami komunikacyjnymi, ruch w wypożyczalni rośnie do okolic południa, po tym delikatnie się zmniejsza, żeby znacznie wzrastać od godziny 16.     
+
+##### **Rysunek 6.** Rozkład wypożyczeń rowerów względem dnia tygodnia z podziałem na rodzaj użytkowników
+
+```{r bike-sharing-6, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+dzien.tyg = factor(d$weekday, levels = c(0,1,2,3,4,5,6), labels = c("Niedz","Pon","Wt","Śr","Czw","Pt","Sob"))
+
+par(mfrow=c(2, 1))
+tydz=aggregate(d$registered, by=list(dzien.tyg), FUN = sum)
+barplot(height=tydz$x, names.arg=tydz$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, main="Wypożyczenia wśród użytkowników zarejestrowanych")
+
+tydz2=aggregate(d$casual, by=list(dzien.tyg), FUN = sum)
+barplot(height=tydz2$x, names.arg=tydz2$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, main="Wypożyczenia wśród użytkowników okazjonalnych")
+
+```
+
+Wykresy pokazują wyraźną różnicę pomiędzy użytkownikami, którzy są zarejestrowani w systemie wypożyczalni oraz tymi, którzy korzystają z rowerów okazjonalnie. Użytkownicy zarejestrowani wypożyczają rowery najczęściej w pracujące dni tygodnia, przy czym w weekend nieznacznie mniej. Natomiast użytkownicy okazjonalni wypożyczają rowery głównie w weekendy, a liczba wypożyczeń w dni pracujące jest znacząco niższa.
+
+##### **Rysunek 7.** Rozkład wypożyczeń rowerów według rodzaju użytkowników względem miesiąca
+
+```{r bike-sharing-7, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+miesiac = factor(d$mnth, levels = c(1,2,3,4,5,6,7,8,9,10,11,12), labels = c("Styczeń","Luty","Marzec","Kwiecień","Maj","Czerwiec","Lipiec","Sierpień","Wrzesień","Październik","Listopad","Grudzień"))
+
+par(mfrow=c(2, 1))
+m1=aggregate(d$registered, by=list(miesiac), FUN = sum)
+barplot(height=m1$x, names.arg=m1$Group.1, horiz=F,col="skyblue1", cex.axis = 0.5, cex.names = 0.7, las=2, main="Wypożyczenia wśród użytkowników zarejestrowanych")
+
+m2=aggregate(d$casual, by=list(miesiac), FUN = sum)
+barplot(height=m2$x, names.arg=m2$Group.1, horiz=F,col="skyblue1", cex.axis = 0.5, cex.names = 0.7, las=2, main="Wypożyczenia wśród użytkowników okazjonalnych")
+
+```
+
+Kolejna grupa wykresów pokauzje różnice między typami użytkowników w systemie wypożyczalni. Użytkownicy zarejestrowani regularnie wypożyczją rowery w ciagu roku. Najczęściej wypożyczają oni w miesiącach maj-październik. W pozostałych miesiącach różnica jest nieznaczna. Z drugiej strony użytkownicy okazjonalni najchętniej decydują się na wypożyczenie roweru w miesiącach marzec-październik. Jednakże w znaczący sposób rezygnują oni z wypożyczania rowerów w pozostałe miesiące. Można wyciągnąć z tego wniosek, że użytkownicy zarejestrowani są bardziej lojalni wobec wypożyczalni i starają się korzystać z tej usługi przez cały rok. Natomiast użytkownicy okazjonalni, jak sama nazwa wskazuje, korzystają z wypożyczalni okazyjnie. Z pewnością jest to uwarunkowane przez warunki pogodowe i porę roku. 
+
+##### **Rysunek 8.** Rozkład wypożyczeń rowerów według rodzaju użytkowników wzglem pory roku
+
+```{r bike-sharing-8, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+pora.roku = factor(d$season, levels = c(1,2,3,4), labels = c("Zima","Wiosna","Lato","Jesień"))
+dzien.prac = factor(d$workingday, levels = c(0,1), labels = c("Dzień wolny","Dzień pracujący"))
+
+par(mfrow=c(2, 2))
+s1=aggregate(d$registered, by=list(pora.roku), FUN = sum)
+barplot(height=s1$x, names.arg=s1$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, las=2, main="Wypożyczenia użytkowników zarejestrowanych", cex.main=0.8)
+
+s2=aggregate(d$casual, by=list(pora.roku), FUN = sum)
+barplot(height=s2$x, names.arg=s2$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, las=2, main="Wypożyczenia użytkowników okazjonalnych", cex.main=0.8)
+
+sw1=aggregate(d$registered, by=list(dzien.prac), FUN = sum)
+barplot(height=sw1$x, names.arg=sw1$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, las=1, main="Wypożyczenia użytkowników zarejestrowanych", cex.main=0.8)
+
+sw2=aggregate(d$casual, by=list(dzien.prac), FUN = sum)
+barplot(height=sw2$x, names.arg=sw2$Group.1, horiz=F,col="skyblue1", cex.axis = 0.7, cex.names = 0.8, las=1, main="Wypożyczenia użytkowników okazjonalnych", cex.main=0.8)
+
+```
+
+Kolejne wykresy to uzupełnienie oraz potwierdzenie analiz wykonanych wcześniej. Ogółem ludzie częściej decydują się na wypożyczenie rowerów na wiosnę oraz w lecie. Wobec pozostałych pór roku, użytkownicy zarejestrowani wypożyczają rowery częściej niż okazjonalni. Również użytkownicy zarejestrowani wypożyczają rowery częściej w dni pracujące. Natomiast użytkownicy okazjonalni niewiele więcej decydują się na wypożyczenie roweru w dzień wolny od pracy. 
+
+##### **Rysunek 9.** Struktura wypożyczeń rowerów według warunków pogodowych
+
+```{r bike-sharing-9, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+atmo= factor(d$weathersit, levels = c(1,2,3,4), labels = c("czyste niebo, częściowe zachmurzenie", "mgła", "lekki śnieg lub deszcz", "ciężki śnieg lub deszcz, grad, burza")) 
+
+p3=aggregate(d$cnt, by=list(atmo), FUN = sum)
+
+etykiety2=c("czyste niebo lub\n częściowe zachmurzenie", "mgła", "lekki śnieg lub deszcz")
+pogoda=data.frame(p3)
+
+proc2=c(round(pogoda[1,2]/sum(p3$x)*100, digits = 1), round(pogoda[2,2]/sum(p3$x)*100, digits = 1), round(pogoda[3,2]/sum(p3$x)*100, digits = 1))
+etykiety2=paste(etykiety2, proc2)
+etykiety2=paste(etykiety2, "%", sep="")
+pie(c(pogoda[1,2], pogoda[2,2], pogoda[3,2]), col = c("skyblue1","skyblue2", "skyblue3"), labels =etykiety2, main="Warunki pogodowe podczas wypożyczenia")
+```
+
+Najczęściej rowery były wypożyczane, gdy warunki atmosferyczne były bardzo dobre tj. było czyste niebo lub niewielkie, częściowe zachmuerzenie. Takie warunki pogoodwe panowały podczas prawie 70% wypożyczeń ogółem. W przypadku występowania mgły, wypożyczenia  stanowiły niewiele ponad 30%. Znikomy udział (1,2%) w liczbie wypożyczeń stanowią wypożyczenia podczas lekkich opadów deszczu lub śniegu. Natomiast 0% to wypożyczenia podczas ciężkich opadów śniegu lub deszczu, gradu i burzy (w opisie zbioru danych występują cztery kategorie warunków atmosferycznych). Biorąc to wszystko pod uwagę, można wnioskować, że pogoda ma istotny wpływ na decyzję o wypożyczeniu roweru. 
+
+
+Jednocześnie można sprawdzić ile dni w ciągu dwóch lat obserwacji miały poszczególne kategorie warunków pogodowych. Najwięcej było dni z bezchmurnym niebem lub niewielkim zachmurzeniem. Z drugiej strony nie wystąpiły ciężkie opady deszczu, śniegu lub gradu i burzy. 
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+data.frame(summary(atmo))
+```
+
+A tak rozkładała się liczba wypożyczeń z uwzględnieniem poszczególnych warunków atmosferycznych.  
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+pogoda
+```
+
+### <span style="color:#0066ff">**5. Zaawansowana analiza zjawiska - regresja logistyczna**</span> 
+
+Analiza za pomocą narzędzia regresji logistycznej miała na celu sprawdzenie, które z wybranych czynników mają największy wpływ na wypożyczenie rowerów. W tym celu zmienna _cnt_ została zdychotomizowana na wartości (0,1) na podstawie podziału według kwartyla 0.75. Obserwacje równe lub poniżej wartości kwartyla 0.75 zostały oznaczone jako 0, natomiast powyżej kwartyla 0.75 jako 1. Zbiór zmiennych niezależnych stanowią zmienne jakościowe oraz ilościowe. 
+
+#### <span style="color:#0066ff">**5.1. Wybór zmiennych niezależnych**</span> 
+
+Wybrano następujący zestaw zmiennych, które zostały poddane analizie pod względem wprowadzenia do modelu:
+
+- ***season*** - pora roku
+- ***mnth*** - miesiąc
+- ***hr*** - godzina
+- ***holiday*** - święto
+- ***weekday*** - dzień tygodnia
+- ***workingday*** - dzień pracujący
+- ***weathersit*** - warunki atmosferyczne
+- ***temp*** - Temperatura w stopniach Celsjusza poddana standaryzacji. Wartość min -8, max +39  
+- ***atemp*** - standaryzowana odczuwana temperatura
+- ***hum*** - standaryzowana wilgotność powietrza
+- ***windspeed*** - standaryzowana prędkość wiatru
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+#Podział zmiennej cnt według kwartyla 0.75
+
+i = 1
+while(i <= length(h$cnt)) {
+  if (h$cnt[i] <= quantile(h$cnt, 0.75))
+  {
+    h$cnt[i] = 0
+  } else
+  {
+    h$cnt[i] = 1
+  }
+  i = i +1
+}
+
+# Wyznaczenie zbioru traningowego oraz testowego według kwartyla 0.75
+
+set.seed(680)
+probka = sample.int(nrow(h), floor(0.75*nrow(h)), replace = FALSE)
+h.train = h[probka,]
+h.test = h[-probka,]
+
+```
+
+#### <span style="color:#0066ff">**5.2. Model funkcji logistycznej**</span>
+
+Funckja _glm()_ wyznaczyła współczynniki w modelu uogólnionych modeli liniowych (GLM - _Generalized Linear Models_). Parametr _binomial_ dotyczy rodziny rozkładów dwumianowych, który spowoduje otrzymanie modleu regresji logistycznej. 
+
+Wywołanie funkcji regresji logistycznej oraz wygenerowanie podsumowań wyników różnych funckji dopasowujących model. 
+```{r}
+m <- glm(cnt ~ season + hr +  holiday + weekday + workingday + weathersit + temp + atemp + hum + windspeed, data = h.train, family = "binomial")
+summary(m)
+```
+
+Na początku wywołanego podsumowania wyników, przedstawione są reszty dewiancyjne tj. minimum, maksimum oraz kwartyle. Dalej pokazane zostały oceny współczynników dla kolejnych zmiennych objaśniających i odchylenia standardowe tych ocen. Kolejną kolumnę w tabeli wyników stanowią wartości statystyki testowej dla testu z hipotezą zerową dotyczącą nieistotności danej zmiennej w modelu wraz z wartością _p-value_ dla tego testu. Im mniejsze wartości przyjmuje wartość _p-value_, tym dana zmienna jest bardziej istotniejsza. Dla uproszczenia interpretacji, funkcja graficznie przedstawia to za pomocą symbolu gwiazdek po prawej stronie. Maksymalnie wyświetlane są trzy gwiazdki, które oznaczają, że dana zmienna najlepiej opisuje przyjęty model.   
+
+W oszacowanym modelu zostały wybrane zmienne, które pod względem statystycznym najlepiej opisują korzystanie z wypożyczalni rowerów publicznych. Są to:
+
+- ***season*** - pora roku
+- ***hr*** - godzina
+- ***holiday*** - święto
+- ***workingday*** - dzień pracujący
+- ***temp*** - temperatura  
+- ***hum*** - wilgotność powietrza
+- ***windspeed*** - prędkość wiatru
+
+Dodatkowo zostały określone wartości dewiancji zerowej i resztowej kryterium informacyjnego Akaike'a (_AIC_), którego wartość wyniosła `r round(m$aic, digits=2)`. Kryterium _AIC_ jest tutaj określane jako miara dobroci dopasowania. Algorytm estymujący współczynniki metodą _Fishera_ (najmniejszych ważonych kwadratów) został iterowany `r m$iter` razy. 
+
+Następnie można uzyskać wartości wyestymowanych współczynników przy danych zmiennych, którymi można opisać model określający wypożyczanie rowerów publicznych.
+```{r}
+m$coefficients
+
+```
+
+_Fitted.values_ zwraca wartości prawdopodobieństw "sukcesu" (oznaczającego wypożyczenie roweru), które zostały dopasowane przez model dla każdej z prób w zbiorze treningowym. _Linear.predictors_ pokazuje dla każdej z prób wartości dopasowane przez model przed przekształceniem przez wiążącą funkcję. Natomiast _residuals_ ukazuje reszty dla każdej z prób. Na potrzeby raportu, przedstawiono po sześć pierwszych obserwacji ze zbiorów wynikowych podanych współczynników. 
+```{r}
+head(m$fitted.values) 
+head(m$linear.predictors)
+head(m$residuals)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+predict.m=predict(m, newdata = h.test, type="response") #Prawdopodobieństwo dla każdej zmiennej ze zbioru testowego
+
+#Budowa confucion matrix, próg odcięcia został ustalony na poziomie 0.4
+predict.m.f=predict.m
+predict.m.f[predict.m >= 0.40] = 1  
+predict.m.f[predict.m < 0.40] = 0
+
+cm.m=confusionMatrix(factor(predict.m.f,levels=c(0,1)), factor(h.test$cnt, levels=c(0,1)))
+```
+
+#### <span style="color:#0066ff">**5.3. Weryfikacja modelu regresji logistycznej**</span>
+
+Sprawdzenie dokładności modelu można wykonać przy pomocy _confusion matrix_. Wszystkie statystyki dotyczące tej macierzy przedstawione zostały poniżej. Pod względem dokładności modelu interesująca będzie statystyka _AUC_, która wskazuje na dokładność modelu rzędu 0.6868.
+```{r}
+cm.m
+```
+
+Dokładność modelu można również otrzymać w następujący sposób: należy dodać wartości zwrócone przez macierz przy wynikach dających jednoznaczną odpowiedź tzn. wypożyczenie roweru lub nie. Dodane zostaną wartości dla komórek w macierzy (0,0) oraz (1,1), a następnie podzielić przez sumę wszystkich wartości komórek z macierzy.
+
+```{r echo=FALSE}
+cm.m$table
+```
+
+Oznacza to, że dokładność modelu na zbiorze testowym wynosi `r (cm.m$table[1,1] + cm.m$table[2,2])/sum(cm.m$table)`.
+Można stwierdzić, że opracowany model w około 68% przypadków prawidłowo przewidzi decyzję dotyczącą wypożyczenia roweru lub nie, oczywiście przy danych okolicznościach tj. warunkach. 
+
+Również na zbiorze treningowym dokładność modelu była na bardzo podobnym poziomie, przy ustalonym progu odcięcia równym 0.4. Macierz błędu dla zbioru treningowego prezentuje się następująco:
+
+```{r echo=FALSE}
+m.t=table(m$y, m$fitted.values>0.4)
+m.t
+```
+
+Na podstawie macierzy, można ustalić, że model prawidłowo rozpoznaje `r round((m.t[1,1]+m.t[2,2])/sum(m.t)*100, digits=2)`% przypadków na zbiorze treningowym. 
+
+
+
+Kolejnym sposobem na wykonanie sprawdzenia efektywności modelu predykcyjnego jest wykreślenie krzywej ROC. Krzywa odpowiada za macierz błędu, która powstaje poprzez modyfikacje punktów odcięcia. Inaczej mówiąc, jest funkcją punktu odcięcia.
+
+
+##### **Rysunek 10.** Krzywa ROC dla opracowanego modelu regresji logistycznej 
+```{r bike-sharing-10, echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+roc.m=roc(h.test$cnt, predict.m)
+plot(roc.m, col="skyblue3")
+
+```
+
+Krzywą ROC interpertuje się następująco: najbardziej pożądaną jest maksymalna wartość pola powierzchni pomiędzy krzywą ROC, a prostą ustaloną jako klasyfikator losowy. Natomiast klasyfikator idealny to punkt, gdzie czułość (_sensitivity_) wynosi 1 i specyficzność (_specificity_) ma wartość 0. W przypadku tego modelu pole powierzchni stanowi `r (roc.m$auc)` "idealności". Oznacza to, że model około w `r round(roc.m$auc, digits=2)*100`% poprawnie sklasyfikuje decyzję o wypożyczeniu roweru lub nie na podstawie zestawu zmiennych diagnostycznych, które zostały do modelu wprowadzone. 
+
+
+### <span style="color:#0066ff">**6. Podsumowanie i wnioski płynące z analizy**</span>
+
+Dzięki przeprowadzonej analizie dotyczącej systemu wypożyczalni rowerów publicznych w Waszyngtonie można wyciągnąć następujące wnioski: 
+
+1. W latach 2011-2012 nastąpił znaczący wzrost w liczbie wypożyczeń** rowerów w Waszyngtonie.
+2. Znaczący udział we wzroście mają użytkownicy zarejestrowani. 
+3. Użytkownicy posiadający konto w serwisie znacznie częściej wypożyczają rowery od użytkownikóW okazjonalnych. W strukturze wypożyczeń ogółem stanowią oni 81%, a okazjonalni 19%.
+4. Rowery najczęściej wypożyczane są rano w godzinach 7-9 oraz późnym południem w godzinach 16-19. Te dwie pory dnia można określić jako szczyty komunikacyjne. Oznacza to, że rower w Waszyngtonie jest bardzo popularnym środkiem transportu do przemieszczania się na przykład rano z domu do pracy lub szkoły oraz popołudniu w drodze powrotnej. Przy czym w szczycie popołudniowym rowery wybierane są częściej niż rano. 
+5. Zarejestrowani użytkownicy częściej korzystają z rowerów w pracujące dni tygodnia. Natomiast w weekendy ich aktywność nieznacznie maleje. Z kolei w przypadku okazjonalnych, różnica pomiędzy dniami pracującymi, a weekednami jest wyraźna. W dni wolne od pracy wypożyczają oni rowery znacznie częściej niż w dni powszednie. Może oznaczać to fakt, że zarejestrowani wykorzystują rower jako środek transportu w ciągu tygodnia, a w czasie weekednów korzystają z nich rekreacyjnie. Okazjonalni najprawdopodobniej wykorzystują rowery tylko w celach rekreacyjnych. 
+6. Wypożyczanie rowerów charakteryzuje się sezonowością w przypadku miesięcy oraz pór roku. Między kwietniem, a październikiem można zaobserwować większy ruch w systemie wypożyczalni. Co za tym idzie, najwięcej rowerów wypożycza się na wiosnę i lato.
+7. Warunki atmosferyczne mają wpływ na to, czy ktoś zdecyduje się na wypożyczenie roweru. Najczęściej rowery wypożyczane były podczas warunków pogodowych sklasyfikowanych jako _czyste niebo lub częściowe zachmurzenie_. Stanowiło to wtedy około 68% wszystkich wypożyczeń. Najmniejszy ruch w wypożyczalni odnotowywany był, gdy padał _lekki śnieg lub deszcz_ (niewiele ponad 1% wypożyczeń)
+8. Przeprowadzony proces regresji logistycznej pokazał jakie czynniki mają największy wpływ na to, czy użytkownik (zarówno zarejestrowany i okazjonalny) podejmie decyzję o wypożyczeniu roweru. Największy wpływ mają m.in. czynniki atmosferyczne: temperatura, wilgotność powietrza, prędkość wiatru, a także pora roku, godzina oraz to, czy dzień jest dniem pracującym lub świętem/dniem wolnym od pracy.  
+9. Miary statystyczne charakteryzujące model regresji logistycznej wskazały, że trafność modelu szacowana jest na poziomie `r round((m.t[1,1]+m.t[2,2])/sum(m.t)*100, digits=2)`%. Czyni to model sprawdzajacy się w sposób dobry. 
+
+Podsumowując, wypożyczanie rowerów staje się oraz bardziej popularne ze względów praktycznych (np. sprawne poruszanie się po mieście), a także ze względów zdrowotnych ( np. moda na prowadzenie zdrowego trybu życia). Pod względem biznesowym, istnieje szansa na dalszy rozwój wypożyczalni. Dalszy rozwój jest możliwy, jeżeli zostaną uwzględnione istotne czynniki, które wpływają na decyzję o wypożyczeniu roweru. Oczywiście w grupie tych czynników występuje kilka na których nie ma nikt wpływu (np. warunki atmosferyczne). Z drugiej strony można odnaleźć czynniki, które przy zastosowaniu odpowiednich zabiegów np. oferta promocyjna w trakcie weekendów, mogą mieć wpływ na decyzję o skorzystaniu z usług wypożyczalni. 
